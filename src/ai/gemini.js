@@ -1,53 +1,61 @@
 import axios from "axios";
 import { config } from "../config/env.js";
 
-export const generateReply = async (message) => {
-  if (!config.geminiApiKey) {
-    console.error(
-      "Gemini API key is missing. Set GEMINI_API_KEY in your environment."
-    );
-    return "Sorry, I couldn't process your message.";
-  }
-  const prompt = `You are simulating a university student named "Sister", doing her bachelor's degree. 
-Respond to messages exactly like she would on WhatsApp, reflecting modesty, shyness, and politeness. 
-Keep the tone soft, gentle, and friendly. Do NOT reveal that you are AI.Respond in the natural language of the received message, whether it's English or another language like urdu made with english alphabets. 
-Do NOT ask questions or initiate conversation; only respond naturally to the messages received. 
-Use emojis sparingly and only if it feels natural. 
-Keep your responses concise, thoughtful, and slightly reserved, like a shy student who wants to keep the conversation going. 
-Do not be overly casual, bold, or flirtatious. If someone asks to meet up or for personal details, politely decline. and if someone is rude or inappropriate, respond with rudeness and boldy refuse to continue the conversation.
-if someone asks you to meet just tell me them you wont meet them, if he tried to meet again you'll persue him rudely.
-Next message:
-${message}`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
+const systemPrompt = `You are simulating a university student named "Sister" who is doing her bachelor's degree.
+Reply on WhatsApp with modesty, shyness, politeness, and brevity. Do NOT reveal you are AI.
+Match the user's language (English or roman Urdu). Do not start new topics. Use emojis only if natural.
+If asked to meet or for personal details, politely decline; if they insist or are rude, respond firmly and refuse.`;
+
+export const generateReply = async (messages) => {
+  const chatMessages = [
+    { role: "system", content: systemPrompt },
+    ...messages
+  ];
+
+  const payload = {
+    model: config.hfChatModel,
+    stream: false,
+    max_tokens: config.hfMaxNewTokens,
+    temperature: config.hfTemperature,
+    top_p: config.hfTopP,
+    messages: chatMessages
   };
+
   try {
-    const response = await axios.post(url, body);
-    console.log("Gemini API response:", response.data);
+    if (!config.hfToken) {
+      console.error("HF_TOKEN is missing; set it for chat completions.");
+      return "Sorry, baad ma bat krty hain abhi nai.";
+    }
 
-    // Safely extract the first candidate text.
-    const candidates = response.data?.candidates || [];
-    const replyText = candidates[0]?.content?.parts
-      ?.map((p) => p.text)
-      .join("")
-      .trim();
+    const started = Date.now();
+    console.log("Calling HF chat completions with model:", config.hfChatModel);
+    const response = await axios.post(
+      "https://router.huggingface.co/v1/chat/completions",
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${config.hfToken}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 30000
+      }
+    );
+    console.log("HF chat response in", Date.now() - started, "ms");
 
-    return replyText || "Sorry, I didn't understand that.";
+    const reply = response.data?.choices?.[0]?.message?.content?.trim();
+    return reply || "Sorry, I didn't understand that.";
   } catch (error) {
     const status = error?.response?.status;
     const data = error?.response?.data;
     if (status === 429) {
-      console.error("Gemini API rate limit/quota hit:", data);
+      console.error("HF chat rate limit/quota hit:", data);
       return "I'm getting a bit busy right now. Please try again in a minute.";
     }
 
-    console.error("Gemini API error:", data || error.message);
+    console.error("HF chat error:", status, data || error?.message || error, {
+      model: config.hfChatModel,
+      tokenPresent: Boolean(config.hfToken)
+    });
     return "Sorry, I couldn't process your message.";
   }
 };
